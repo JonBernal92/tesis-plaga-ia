@@ -1,0 +1,27 @@
+# Entorno virtual
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# TensorFlow / Keras
+*.h5
+*.keras
+*.pb
+logs/
+checkpoints/
+
+# Dataset
+dataset/
+data/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
