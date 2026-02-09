@@ -1,16 +1,16 @@
 # =========================================
-# Entrenamiento del modelo de detección de plagas
-# Cultivo: Tomate
+# Entrenamiento con Transfer Learning
+# MobileNetV2 - Detección de Plagas en Tomate
 # =========================================
 
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import (
-    Conv2D, MaxPooling2D, Flatten,
-    Dense, Dropout, BatchNormalization
-)
+from tensorflow.keras.layers import Dense, Dropout, GlobalAveragePooling2D
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
 
@@ -25,28 +25,27 @@ ruta_prueba = "../dataset/tomato/test_set"
 # -----------------------------------------
 TAMANO_IMAGEN = (224, 224)
 TAMANO_LOTE = 32
-CANALES = 3
 NUMERO_CLASES = 5
 EPOCHS = 20
 
-print("Cargando dataset de entrenamiento y prueba...")
+print("Configurando generadores de imágenes...")
 
 # -----------------------------------------
-# Generadores de imágenes
+# Generadores con preprocess_input
 # -----------------------------------------
 generador_entrenamiento = ImageDataGenerator(
-    rescale=1.0 / 255,
-    rotation_range=20,
+    preprocessing_function=preprocess_input,
+    rotation_range=30,
     width_shift_range=0.2,
     height_shift_range=0.2,
-    shear_range=0.15,
-    zoom_range=0.15,
+    shear_range=0.2,
+    zoom_range=0.2,
     horizontal_flip=True,
     fill_mode="nearest"
 )
 
 generador_prueba = ImageDataGenerator(
-    rescale=1.0 / 255
+    preprocessing_function=preprocess_input
 )
 
 # -----------------------------------------
@@ -72,80 +71,86 @@ print("Clases detectadas:")
 print(datos_entrenamiento.class_indices)
 
 # -----------------------------------------
-# Cálculo de pesos por clase
+# Pesos por clase (balanceo)
 # -----------------------------------------
-clases_entrenamiento = datos_entrenamiento.classes
+clases = datos_entrenamiento.classes
 
 pesos_clase = compute_class_weight(
     class_weight="balanced",
-    classes=np.unique(clases_entrenamiento),
-    y=clases_entrenamiento
+    classes=np.unique(clases),
+    y=clases
 )
 
 pesos_clase_dict = dict(enumerate(pesos_clase))
-
-print("Pesos por clase calculados:")
-for clase, peso in pesos_clase_dict.items():
-    print(f"Clase {clase}: peso {peso:.3f}")
+print("Pesos por clase:", pesos_clase_dict)
 
 # -----------------------------------------
-# Construcción del modelo CNN
+# Construcción del modelo MobileNetV2
 # -----------------------------------------
-print("Construyendo el modelo CNN...")
+print("Cargando MobileNetV2 preentrenada...")
 
-modelo = Sequential()
+base_model = MobileNetV2(
+    weights="imagenet",
+    include_top=False,
+    input_shape=(224, 224, 3)
+)
 
-# Bloque convolucional 1
-modelo.add(Conv2D(32, (3, 3), activation="relu",
-                  input_shape=(TAMANO_IMAGEN[0], TAMANO_IMAGEN[1], CANALES)))
-modelo.add(BatchNormalization())
-modelo.add(MaxPooling2D(2, 2))
+# Congelamos la base
+base_model.trainable = False
 
-# Bloque convolucional 2
-modelo.add(Conv2D(64, (3, 3), activation="relu"))
-modelo.add(BatchNormalization())
-modelo.add(MaxPooling2D(2, 2))
+modelo = Sequential([
+    base_model,
+    GlobalAveragePooling2D(),
+    Dense(128, activation="relu"),
+    Dropout(0.5),
+    Dense(NUMERO_CLASES, activation="softmax")
+])
 
-# Bloque convolucional 3
-modelo.add(Conv2D(128, (3, 3), activation="relu"))
-modelo.add(BatchNormalization())
-modelo.add(MaxPooling2D(2, 2))
-
-# Bloque convolucional 4
-modelo.add(Conv2D(256, (3, 3), activation="relu"))
-modelo.add(BatchNormalization())
-modelo.add(MaxPooling2D(2, 2))
-
-# Aplanado
-modelo.add(Flatten())
-
-# Capas densas
-modelo.add(Dense(256, activation="relu"))
-modelo.add(Dropout(0.5))
-
-modelo.add(Dense(128, activation="relu"))
-modelo.add(Dropout(0.5))
-
-# Capa de salida
-modelo.add(Dense(NUMERO_CLASES, activation="softmax"))
-
-print("Modelo CNN construido correctamente.")
+print("Modelo construido correctamente.")
 
 # -----------------------------------------
-# Compilación del modelo
+# Compilación
 # -----------------------------------------
 modelo.compile(
-    optimizer=Adam(learning_rate=0.0001),
+    optimizer=Adam(learning_rate=0.001),
     loss="categorical_crossentropy",
     metrics=["accuracy"]
 )
 
-print("Modelo compilado correctamente.")
+print("Modelo compilado.")
 
 # -----------------------------------------
-# Entrenamiento del modelo
+# Callbacks
 # -----------------------------------------
-print("Iniciando entrenamiento del modelo...")
+checkpoint = ModelCheckpoint(
+    "mejor_modelo_tomate.keras",
+    monitor="val_accuracy",
+    save_best_only=True,
+    mode="max",
+    verbose=1
+)
+
+reduce_lr = ReduceLROnPlateau(
+    monitor="val_loss",
+    factor=0.2,
+    patience=3,
+    min_lr=0.00001,
+    verbose=1
+)
+
+early_stop = EarlyStopping(
+    monitor="val_loss",
+    patience=5,
+    restore_best_weights=True,
+    verbose=1
+)
+
+callbacks = [checkpoint, reduce_lr, early_stop]
+
+# -----------------------------------------
+# Entrenamiento
+# -----------------------------------------
+print("Iniciando entrenamiento...")
 
 historial = modelo.fit(
     datos_entrenamiento,
@@ -153,15 +158,14 @@ historial = modelo.fit(
     epochs=EPOCHS,
     validation_data=datos_prueba,
     validation_steps=datos_prueba.samples // TAMANO_LOTE,
-    class_weight=pesos_clase_dict
+    class_weight=pesos_clase_dict,
+    callbacks=callbacks
 )
 
 print("Entrenamiento finalizado.")
 
 # -----------------------------------------
-# Guardar modelo
+# Guardar modelo final
 # -----------------------------------------
-modelo_guardado = "modelo_tomate_plagas.h5"
-modelo.save(modelo_guardado)
-
-print(f"Modelo guardado en: {modelo_guardado}")
+modelo.save("modelo_mobilenetv2_tomate_plagas.h5")
+print("Modelo guardado correctamente.")

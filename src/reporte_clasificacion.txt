@@ -1,11 +1,11 @@
                     precision    recall  f1-score   support
 
-           healthy       0.73      0.91      0.81       500
-       leaf blight       0.55      0.40      0.46      1309
-         leaf curl       0.33      0.32      0.33       532
-septoria leaf spot       0.70      0.39      0.50      2340
-  verticulium wilt       0.29      0.79      0.43       764
+           healthy       0.83      0.89      0.86       500
+       leaf blight       0.72      0.36      0.48      1309
+         leaf curl       0.39      0.80      0.52       532
+septoria leaf spot       0.76      0.54      0.63      2340
+  verticulium wilt       0.38      0.75      0.51       764
 
-          accuracy                           0.49      5445
-         macro avg       0.52      0.56      0.51      5445
-      weighted avg       0.57      0.49      0.49      5445
+          accuracy                           0.58      5445
+         macro avg       0.62      0.67      0.60      5445
+      weighted avg       0.67      0.58      0.59      5445
