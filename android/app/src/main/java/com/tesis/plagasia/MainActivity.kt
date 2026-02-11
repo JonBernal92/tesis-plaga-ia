@@ -1,24 +1,23 @@
 package com.tesis.plagasia
 
 import android.Manifest
-import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,7 +38,36 @@ import java.util.concurrent.Executors
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
+        setContent { MainScreen() }
+    }
+}
+
+/* ─────────────────────────────
+   PANTALLA PRINCIPAL
+   ───────────────────────────── */
+@Composable
+fun MainScreen() {
+    Column(modifier = Modifier.fillMaxSize()) {
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF2E7D32))
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Plagas IA",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
             CameraScreen()
         }
     }
@@ -52,15 +80,13 @@ fun CameraScreen() {
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (cameraPermissionState.status) {
-            is PermissionStatus.Granted -> {
-                PestDetectionScreen()
-            }
+            is PermissionStatus.Granted -> PestDetectionScreen()
             is PermissionStatus.Denied -> {
                 Column(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("Se necesitan permisos de cámara para detectar plagas.", modifier = Modifier.padding(16.dp))
+                    Text("Se necesita permiso de cámara")
                     LaunchedEffect(Unit) {
                         cameraPermissionState.launchPermissionRequest()
                     }
@@ -75,25 +101,44 @@ fun PestDetectionScreen() {
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
-    var detectionResult by remember { mutableStateOf("Inicializando IA...") }
+    var detectionResult by remember { mutableStateOf("Esperando imagen...") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Inicializamos el clasificador
-    // Si el nombre del archivo está mal o el modelo es incompatible, saltará al 'catch'
     val classifier = remember {
         try {
             TomateClassifier(context)
         } catch (e: Exception) {
-            errorMessage = "Error cargando modelo: ${e.message}"
+            errorMessage = e.message
             null
         }
     }
 
+    /* ───── GALERÍA ───── */
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            try {
+                val bitmap = if (Build.VERSION.SDK_INT >= 28) {
+                    val source = ImageDecoder.createSource(context.contentResolver, it)
+                    ImageDecoder.decodeBitmap(source)
+                } else {
+                    MediaStore.Images.Media.getBitmap(context.contentResolver, it)
+                }
+
+                detectionResult = classifier?.classify(bitmap) ?: "Error IA"
+
+            } catch (e: Exception) {
+                detectionResult = "Error al procesar imagen"
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
+
         if (errorMessage != null) {
-            // PANTALLA ROJA DE ERROR (Solo sale si falla la carga)
             Text(
-                text = "ERROR FATAL:\n$errorMessage",
+                text = "ERROR:\n$errorMessage",
                 color = Color.White,
                 modifier = Modifier
                     .fillMaxSize()
@@ -102,23 +147,19 @@ fun PestDetectionScreen() {
                 textAlign = TextAlign.Center
             )
         } else {
-            // PANTALLA DE CÁMARA (Correcto)
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     val previewView = PreviewView(ctx)
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    val executor = ContextCompat.getMainExecutor(ctx)
 
                     cameraProviderFuture.addListener({
                         try {
                             val cameraProvider = cameraProviderFuture.get()
 
-                            // 1. Vista previa (Preview)
                             val preview = Preview.Builder().build()
                             preview.setSurfaceProvider(previewView.surfaceProvider)
 
-                            // 2. Analizador de imágenes (ImageAnalysis)
                             val imageAnalysis = ImageAnalysis.Builder()
                                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
@@ -126,65 +167,78 @@ fun PestDetectionScreen() {
 
                             imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
                                 try {
-                                    val rotationDegrees = imageProxy.imageInfo.rotationDegrees
-
-                                    // Convertir ImageProxy a Bitmap
                                     val bitmapBuffer = Bitmap.createBitmap(
-                                        imageProxy.width, imageProxy.height, Bitmap.Config.ARGB_8888
+                                        imageProxy.width,
+                                        imageProxy.height,
+                                        Bitmap.Config.ARGB_8888
                                     )
-                                    imageProxy.use { bitmapBuffer.copyPixelsFromBuffer(imageProxy.planes[0].buffer) }
 
-                                    // Rotar el bitmap para que coincida con la orientación del modelo
-                                    val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                                    imageProxy.use {
+                                        bitmapBuffer.copyPixelsFromBuffer(it.planes[0].buffer)
+                                    }
+
+                                    val matrix = Matrix().apply {
+                                        postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
+                                    }
+
                                     val rotatedBitmap = Bitmap.createBitmap(
-                                        bitmapBuffer, 0, 0, bitmapBuffer.width, bitmapBuffer.height, matrix, true
+                                        bitmapBuffer,
+                                        0, 0,
+                                        bitmapBuffer.width,
+                                        bitmapBuffer.height,
+                                        matrix,
+                                        true
                                     )
 
-                                    // CLASIFICAR
-                                    val result = classifier?.classify(rotatedBitmap) ?: "Error IA"
-
-                                    // Actualizar texto en pantalla
-                                    previewView.post { detectionResult = result }
+                                    detectionResult =
+                                        classifier?.classify(rotatedBitmap) ?: "Error IA"
 
                                 } catch (e: Exception) {
-                                    Log.e("Camera", "Error analizando imagen", e)
+                                    Log.e("Camera", "Error", e)
                                 }
                             }
 
-                            // 3. Vincular todo al ciclo de vida
-                            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
                             cameraProvider.unbindAll()
                             cameraProvider.bindToLifecycle(
                                 lifecycleOwner,
-                                cameraSelector,
+                                CameraSelector.DEFAULT_BACK_CAMERA,
                                 preview,
                                 imageAnalysis
                             )
 
                         } catch (e: Exception) {
-                            Log.e("Camera", "Error iniciando cámara", e)
+                            Log.e("Camera", "Error cámara", e)
                         }
-                    }, executor)
+                    }, ContextCompat.getMainExecutor(ctx))
+
                     previewView
                 }
             )
 
-            // CAJA DE TEXTO CON EL RESULTADO
-            Box(
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.7f))
-                    .padding(24.dp)
+                    .background(Color.Black.copy(alpha = 0.75f))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+
                 Text(
                     text = detectionResult,
                     color = if (detectionResult.contains("Sano")) Color.Green else Color.Yellow,
-                    fontSize = 24.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    textAlign = TextAlign.Center
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Button(onClick = {
+                    galleryLauncher.launch("image/*")
+                }) {
+                    Text("📁 Analizar imagen de galería")
+                }
             }
         }
     }
