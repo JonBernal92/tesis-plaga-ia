@@ -2,4 +2,6 @@
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.compose) apply false
+    // ESTA ES LA LÍNEA QUE FALTABA Y QUE ARREGLA EL ERROR:
+    alias(libs.plugins.kotlin.android) apply false
 }
