@@ -26,12 +26,12 @@ ruta_prueba = "../dataset/tomato/test_set"
 TAMANO_IMAGEN = (224, 224)
 TAMANO_LOTE = 32
 NUMERO_CLASES = 5
-EPOCHS = 20
+EPOCHS = 30  # Aumentado para mejor convergencia
 
 print("Configurando generadores de imágenes...")
 
 # -----------------------------------------
-# Generadores con preprocess_input
+# Generadores con Data Augmentation
 # -----------------------------------------
 generador_entrenamiento = ImageDataGenerator(
     preprocessing_function=preprocess_input,
@@ -95,9 +95,25 @@ base_model = MobileNetV2(
     input_shape=(224, 224, 3)
 )
 
-# Congelamos la base
-base_model.trainable = False
+# ---------------------------------------------------------
+# Fine-Tuning Parcial
+# ---------------------------------------------------------
+# Se habilita el entrenamiento del modelo base para adaptar
+# los filtros convolucionales al dominio específico de hojas
+# de tomate con enfermedades.
 
+base_model.trainable = True
+
+# Se congelan las primeras capas (características generales)
+for layer in base_model.layers[:100]:
+    layer.trainable = False
+
+print(f"Capas totales en MobileNetV2: {len(base_model.layers)}")
+print("Fine-tuning parcial configurado.")
+
+# -----------------------------------------
+# Modelo completo
+# -----------------------------------------
 modelo = Sequential([
     base_model,
     GlobalAveragePooling2D(),
@@ -109,15 +125,15 @@ modelo = Sequential([
 print("Modelo construido correctamente.")
 
 # -----------------------------------------
-# Compilación
+# Compilación (learning rate reducido)
 # -----------------------------------------
 modelo.compile(
-    optimizer=Adam(learning_rate=0.001),
+    optimizer=Adam(learning_rate=0.0001),  # LR bajo para fine-tuning
     loss="categorical_crossentropy",
     metrics=["accuracy"]
 )
 
-print("Modelo compilado.")
+print("Modelo compilado con fine-tuning.")
 
 # -----------------------------------------
 # Callbacks
@@ -140,7 +156,7 @@ reduce_lr = ReduceLROnPlateau(
 
 early_stop = EarlyStopping(
     monitor="val_loss",
-    patience=5,
+    patience=6,
     restore_best_weights=True,
     verbose=1
 )
@@ -169,3 +185,4 @@ print("Entrenamiento finalizado.")
 # -----------------------------------------
 modelo.save("modelo_mobilenetv2_tomate_plagas.h5")
 print("Modelo guardado correctamente.")
+

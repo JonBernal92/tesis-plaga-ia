@@ -22,7 +22,7 @@ import java.nio.channels.FileChannel
  *
  * @property context Contexto de la aplicación Android para acceso a assets
  */
-class TomateClassifier(private val context: Context) {
+class TomateClassifier(private val context: Context){
 
     // Intérprete del modelo TensorFlow Lite (motor de inferencia)
     private var interpreter: Interpreter? = null
@@ -86,7 +86,11 @@ class TomateClassifier(private val context: Context) {
     }
 
     /**
-     * Clasifica una imagen de planta de tomate.
+     * Clasifica una imagen de planta de tomate para análisis en tiempo real.
+     *
+     * Este método está optimizado para la vista previa de cámara, aplicando
+     * un umbral de confianza del 50% para reducir falsos positivos durante
+     * el escaneo continuo.
      *
      * Proceso completo de inferencia:
      * 1. Redimensionamiento de imagen a 224x224
@@ -134,6 +138,66 @@ class TomateClassifier(private val context: Context) {
             // Confianza insuficiente: se requiere mejor encuadre o iluminación
             return "Analizando..."
         }
+    }
+
+    /**
+     * Clasifica una imagen mostrando TODOS los resultados con porcentajes.
+     *
+     * A diferencia de classify(), este método no aplica umbral de confianza
+     * y muestra las probabilidades de todas las clases ordenadas de mayor a menor.
+     *
+     * Útil para análisis detallado de imágenes de galería donde el usuario
+     * desea ver el desglose completo de probabilidades para todas las categorías,
+     * permitiendo identificar diagnósticos secundarios o casos ambiguos.
+     *
+     * El resultado incluye:
+     * - Emojis de medalla (🥇🥈🥉) para las tres predicciones principales
+     * - Porcentajes redondeados para facilitar lectura
+     * - Ordenamiento descendente por probabilidad
+     *
+     * @param bitmap Imagen a clasificar (típicamente desde galería)
+     * @return String formateado con todas las clases y sus porcentajes
+     */
+    fun classifyWithAllResults(bitmap: Bitmap): String {
+        // Validación de disponibilidad del intérprete
+        if (interpreter == null) return "Error: Modelo no cargado"
+
+        // Preprocesamiento idéntico al método classify()
+        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
+        val byteBuffer = convertBitmapToByteBuffer(scaledBitmap)
+        val output = Array(1) { FloatArray(labels.size) }
+
+        // Ejecución de inferencia
+        interpreter?.run(byteBuffer, output)
+
+        val probabilities = output[0]
+
+        // Crear lista de pares (índice, probabilidad) y ordenar por probabilidad descendente
+        // Esto permite mostrar primero las predicciones más probables
+        val sortedResults = probabilities.indices
+            .map { index -> index to probabilities[index] }
+            .sortedByDescending { it.second }
+
+        // Construcción del texto formateado con todas las predicciones
+        val resultText = buildString {
+            appendLine("📊 RESULTADOS COMPLETOS:\n")
+
+            sortedResults.forEachIndexed { position, (index, probability) ->
+                val percentage = (probability * 100).toInt()
+
+                // Asignación de emojis de medalla según posición en el ranking
+                val emoji = when (position) {
+                    0 -> "🥇" // Oro: predicción más probable
+                    1 -> "🥈" // Plata: segunda más probable
+                    2 -> "🥉" // Bronce: tercera más probable
+                    else -> "  " // Sin emoji para posiciones inferiores
+                }
+
+                appendLine("$emoji ${labels[index]}: $percentage%")
+            }
+        }
+
+        return resultText.trim()
     }
 
     /**

@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)  // ← AGREGAR ESTA LÍNEA
 }
 
 android {
@@ -17,19 +17,11 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Configuración de ABI (Application Binary Interface):
-        // Se fuerza el uso de la arquitectura 'armeabi-v7a' (32 bits) para garantizar
-        // la compatibilidad con dispositivos específicos y librerías nativas de TensorFlow,
-        // mitigando problemas de alineación de memoria (ej. error 16 KB page size).
         ndk {
             abiFilters.add("armeabi-v7a")
         }
     }
 
-    // Optimización de empaquetado de Assets:
-    // Se instruye a aapt (Android Asset Packaging Tool) para que NO comprima los archivos .tflite.
-    // Esto permite que el modelo sea mapeado directamente en memoria (mmap) durante la inferencia,
-    // reduciendo la latencia de carga y el consumo de RAM.
     aaptOptions {
         noCompress += "tflite"
     }
@@ -46,7 +38,6 @@ android {
 
     packaging {
         jniLibs {
-            // Mantenimiento de compatibilidad con librerías nativas antiguas.
             useLegacyPackaging = true
         }
     }
@@ -90,6 +81,13 @@ dependencies {
 
     // --- GESTIÓN DE PERMISOS ---
     implementation(libs.accompanist.permissions)
+
+    // --- UI TRADICIONAL Y RECYCLERVIEW ---
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.activity)
+    implementation(libs.androidx.constraintlayout)
+    implementation(libs.androidx.recyclerview)
 
     // --- PRUEBAS Y DEPURACIÓN ---
     testImplementation(libs.junit)
