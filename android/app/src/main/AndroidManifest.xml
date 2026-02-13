@@ -14,8 +14,11 @@
         android:label="PlagaIA"
         android:supportsRtl="true"
         android:theme="@style/Theme.PlagaIA"
-        tools:replace="android:allowBackup, android:label">
 
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+
+        tools:replace="android:allowBackup, android:label">
 
         <activity
             android:name=".MainActivity"
@@ -26,7 +29,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
 
         <activity
             android:name=".HistorialActivity"
