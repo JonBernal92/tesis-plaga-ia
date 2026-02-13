@@ -3,260 +3,160 @@ package com.tesis.plagasia
 import android.content.Context
 import android.content.res.AssetFileDescriptor
 import android.graphics.Bitmap
+import android.util.Log
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import java.util.Scanner
 
 /**
- * Clasificador de enfermedades en plantas de tomate mediante Deep Learning.
- *
- * Esta clase implementa un sistema de inferencia basado en TensorFlow Lite
- * para la detección automática de cinco categorías de estados fitosanitarios
- * en cultivos de tomate mediante análisis de imágenes en tiempo real.
- *
- * Arquitectura: MobileNetV2 (optimizada para dispositivos móviles)
- * Entrada: Imágenes RGB de 224x224 píxeles
- * Salida: Vector de probabilidades para 5 clases
- *
- * @property context Contexto de la aplicación Android para acceso a assets
+ * Clasificador inteligente para modelos de Teachable Machine.
+ * * Funcionalidad Clave:
+ * 1. Carga dinámica de etiquetas desde 'labels.txt'.
+ * 2. Limpieza automática de prefijos numéricos (ej: "0 Sano" -> "Sano").
+ * 3. Ejecución del modelo 'model_unquant.tflite'.
  */
-class TomateClassifier(private val context: Context){
+class TomateClassifier(private val context: Context) {
 
-    // Intérprete del modelo TensorFlow Lite (motor de inferencia)
     private var interpreter: Interpreter? = null
+    private var labels: MutableList<String> = mutableListOf()
 
-    // Dimensiones de entrada requeridas por la arquitectura MobileNetV2
-    // El modelo fue entrenado con imágenes cuadradas de 224x224 píxeles
+    // Configuración estándar de Teachable Machine
     private val INPUT_SIZE = 224
-
-    /**
-     * Catálogo de clases de salida del modelo.
-     *
-     * El orden de estas etiquetas debe coincidir exactamente con el orden
-     * utilizado durante el entrenamiento del modelo (índice 0 = primera clase, etc.)
-     *
-     * Clases reconocidas:
-     * - Índice 0: Planta sana (sin patologías)
-     * - Índice 1: Tizón temprano (Alternaria solani)
-     * - Índice 2: Hoja rizada (Virus del enrollamiento)
-     * - Índice 3: Mancha septoria (Septoria lycopersici)
-     * - Índice 4: Marchitez por Verticillium (Verticillium spp.)
-     */
-    private val labels = listOf(
-        "Sano",
-        "Tizón Temprano",
-        "Hoja Rizada",
-        "Mancha Septoria",
-        "Marchitez Verticillium"
-    )
+    private val MODEL_FILE = "model_unquant.tflite"
+    private val LABEL_FILE = "labels.txt"
 
     init {
-        // Inicialización del modelo durante la construcción del objeto
-        // El modelo se carga desde la carpeta 'assets' de la aplicación
-        val model = loadModelFile("tomate_final_compatible.tflite")
-        interpreter = Interpreter(model)
+        try {
+            val model = loadModelFile(MODEL_FILE)
+            interpreter = Interpreter(model)
+            loadLabels(LABEL_FILE)
+            Log.d("PlagaIA", "Modelo cargado correctamente. Etiquetas: $labels")
+        } catch (e: Exception) {
+            Log.e("PlagaIA", "Error crítico inicializando IA", e)
+            throw RuntimeException("No se pudo cargar el modelo o las etiquetas")
+        }
     }
 
     /**
-     * Carga el archivo del modelo TensorFlow Lite desde assets.
-     *
-     * Utiliza mapeo de memoria (memory mapping) para acceso eficiente
-     * sin cargar todo el archivo en RAM, optimizando el uso de recursos.
-     *
-     * @param modelName Nombre del archivo .tflite en la carpeta assets
-     * @return ByteBuffer con el modelo mapeado en memoria
-     * @throws IOException si el archivo no existe o no se puede leer
+     * Carga y limpia las etiquetas del archivo de texto.
+     * Convierte "0 Sano" en "Sano" para que se vea bien en pantalla.
      */
-    private fun loadModelFile(modelName: String): ByteBuffer {
-        // Obtener descriptor del archivo desde assets
-        val fileDescriptor: AssetFileDescriptor = context.assets.openFd(modelName)
+    private fun loadLabels(filename: String) {
+        try {
+            val scanner = Scanner(context.assets.open(filename))
+            while (scanner.hasNextLine()) {
+                val line = scanner.nextLine()
+                // Usamos Regex para quitar los números del principio si existen
+                // Ej: "0 Sano" se convierte en "Sano"
+                val cleanLabel = line.replace(Regex("^\\d+\\s+"), "").trim()
+                if (cleanLabel.isNotEmpty()) {
+                    labels.add(cleanLabel)
+                }
+            }
+            scanner.close()
+        } catch (e: IOException) {
+            Log.e("PlagaIA", "No se encontró labels.txt", e)
+            // Etiquetas de emergencia por si falla la lectura
+            labels.addAll(listOf("Clase 1", "Clase 2", "Clase 3", "Clase 4", "Clase 5"))
+        }
+    }
 
-        // Crear flujo de entrada desde el descriptor
+    private fun loadModelFile(modelName: String): ByteBuffer {
+        val fileDescriptor: AssetFileDescriptor = context.assets.openFd(modelName)
         val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
         val fileChannel: FileChannel = inputStream.channel
-
-        // Parámetros de ubicación del archivo dentro del APK
         val startOffset = fileDescriptor.startOffset
         val declaredLength = fileDescriptor.declaredLength
-
-        // Mapear archivo directamente en memoria (eficiente para archivos grandes)
         return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
     }
 
     /**
-     * Clasifica una imagen de planta de tomate para análisis en tiempo real.
-     *
-     * Este método está optimizado para la vista previa de cámara, aplicando
-     * un umbral de confianza del 50% para reducir falsos positivos durante
-     * el escaneo continuo.
-     *
-     * Proceso completo de inferencia:
-     * 1. Redimensionamiento de imagen a 224x224
-     * 2. Normalización de píxeles al rango esperado por el modelo
-     * 3. Ejecución de la red neuronal
-     * 4. Interpretación de probabilidades de salida
-     *
-     * @param bitmap Imagen capturada por la cámara del dispositivo
-     * @return String con la clase predicha y porcentaje de confianza
+     * Clasifica la imagen y devuelve el resultado formateado.
+     * Retorna: "NombrePlaga \n (Porcentaje%)"
      */
     fun classify(bitmap: Bitmap): String {
-        // Validación de disponibilidad del intérprete
-        if (interpreter == null) return "Error: Modelo no cargado"
+        if (interpreter == null) return "Error: IA no iniciada"
 
-        // PASO 1: PREPROCESAMIENTO DE IMAGEN
-        // Redimensionamiento bilineal a las dimensiones requeridas (224x224)
+        // 1. Preprocesar imagen
         val scaledBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-
-        // PASO 2: CONVERSIÓN A FORMATO TENSOR
-        // Transformación de Bitmap Android a ByteBuffer para TensorFlow Lite
-        // Formato esperado: [1, 224, 224, 3] con valores float32 normalizados
         val byteBuffer = convertBitmapToByteBuffer(scaledBitmap)
 
-        // PASO 3: PREPARACIÓN DEL CONTENEDOR DE SALIDA
-        // Array bidimensional: [1 batch][5 clases]
-        // Cada posición almacenará la probabilidad (0.0 a 1.0) de cada clase
+        // 2. Preparar salida
+        // El tamaño del array de salida debe coincidir con el número de etiquetas
         val output = Array(1) { FloatArray(labels.size) }
 
-        // PASO 4: EJECUCIÓN DE INFERENCIA
-        // El intérprete ejecuta el modelo neuronal con la imagen preprocesada
+        // 3. Ejecutar inferencia
         interpreter?.run(byteBuffer, output)
 
-        // PASO 5: POST-PROCESAMIENTO DE RESULTADOS
+        // 4. Interpretar resultados
         val probabilities = output[0]
-
-        // Búsqueda de la clase con mayor probabilidad
         val maxIndex = probabilities.indices.maxByOrNull { probabilities[it] } ?: -1
 
-        // Umbral de confianza: solo se reporta si la probabilidad supera 50%
-        // Esto reduce falsos positivos en condiciones de iluminación deficiente
+        // Umbral de confianza (50%)
         if (maxIndex != -1 && probabilities[maxIndex] > 0.5f) {
             val confidence = (probabilities[maxIndex] * 100).toInt()
-            return "${labels[maxIndex]}\n($confidence%)"
+            // Obtenemos el nombre limpio de la lista cargada
+            val labelName = if (maxIndex < labels.size) labels[maxIndex] else "Desconocido"
+
+            return "$labelName\n($confidence%)"
         } else {
-            // Confianza insuficiente: se requiere mejor encuadre o iluminación
             return "Analizando..."
         }
     }
 
     /**
-     * Clasifica una imagen mostrando TODOS los resultados con porcentajes.
-     *
-     * A diferencia de classify(), este método no aplica umbral de confianza
-     * y muestra las probabilidades de todas las clases ordenadas de mayor a menor.
-     *
-     * Útil para análisis detallado de imágenes de galería donde el usuario
-     * desea ver el desglose completo de probabilidades para todas las categorías,
-     * permitiendo identificar diagnósticos secundarios o casos ambiguos.
-     *
-     * El resultado incluye:
-     * - Emojis de medalla (🥇🥈🥉) para las tres predicciones principales
-     * - Porcentajes redondeados para facilitar lectura
-     * - Ordenamiento descendente por probabilidad
-     *
-     * @param bitmap Imagen a clasificar (típicamente desde galería)
-     * @return String formateado con todas las clases y sus porcentajes
+     * Método para galería: Muestra todas las probabilidades ordenadas.
      */
     fun classifyWithAllResults(bitmap: Bitmap): String {
-        // Validación de disponibilidad del intérprete
-        if (interpreter == null) return "Error: Modelo no cargado"
+        if (interpreter == null) return "Error: IA no iniciada"
 
-        // Preprocesamiento idéntico al método classify()
         val scaledBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
         val byteBuffer = convertBitmapToByteBuffer(scaledBitmap)
         val output = Array(1) { FloatArray(labels.size) }
 
-        // Ejecución de inferencia
         interpreter?.run(byteBuffer, output)
 
         val probabilities = output[0]
 
-        // Crear lista de pares (índice, probabilidad) y ordenar por probabilidad descendente
-        // Esto permite mostrar primero las predicciones más probables
+        // Crear lista de pares (Indice, Probabilidad) y ordenar
         val sortedResults = probabilities.indices
             .map { index -> index to probabilities[index] }
             .sortedByDescending { it.second }
 
-        // Construcción del texto formateado con todas las predicciones
-        val resultText = buildString {
-            appendLine("📊 RESULTADOS COMPLETOS:\n")
+        // Solo retornamos el mejor resultado en formato simple para que MainActivity lo pueda guardar
+        // Si quieres ver todo el detalle, cambia esta lógica, pero para guardar en DB es mejor uno solo.
+        val topResult = sortedResults[0]
+        val label = if (topResult.first < labels.size) labels[topResult.first] else "Desconocido"
+        val confidence = (topResult.second * 100).toInt()
 
-            sortedResults.forEachIndexed { position, (index, probability) ->
-                val percentage = (probability * 100).toInt()
-
-                // Asignación de emojis de medalla según posición en el ranking
-                val emoji = when (position) {
-                    0 -> "🥇" // Oro: predicción más probable
-                    1 -> "🥈" // Plata: segunda más probable
-                    2 -> "🥉" // Bronce: tercera más probable
-                    else -> "  " // Sin emoji para posiciones inferiores
-                }
-
-                appendLine("$emoji ${labels[index]}: $percentage%")
-            }
-        }
-
-        return resultText.trim()
+        return "$label\n($confidence%)"
     }
 
-    /**
-     * Convierte un Bitmap de Android a ByteBuffer para TensorFlow Lite.
-     *
-     * Realiza normalización de píxeles según el preprocesamiento de MobileNetV2:
-     * - Rango original: [0, 255] (valores RGB de 8 bits)
-     * - Rango normalizado: [-1.0, 1.0] (esperado por el modelo)
-     *
-     * Fórmula de normalización: (pixel - 127.5) / 127.5
-     *
-     * Orden de canales: RGB (Rojo, Verde, Azul)
-     *
-     * @param bitmap Imagen redimensionada a 224x224
-     * @return ByteBuffer con tensor de entrada de 4 dimensiones
-     */
     private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
-        // Cálculo de tamaño del buffer:
-        // 4 bytes (float32) × 224 píxeles × 224 píxeles × 3 canales RGB
         val byteBuffer = ByteBuffer.allocateDirect(4 * INPUT_SIZE * INPUT_SIZE * 3)
-
-        // Configuración del orden de bytes según la arquitectura del dispositivo
-        // (Little-endian en ARM, que es el estándar en Android)
         byteBuffer.order(ByteOrder.nativeOrder())
-
-        // Extracción de valores de píxeles del bitmap
         val intValues = IntArray(INPUT_SIZE * INPUT_SIZE)
+
         bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
 
-        // Iteración por cada píxel de la imagen
         var pixel = 0
         for (i in 0 until INPUT_SIZE) {
             for (j in 0 until INPUT_SIZE) {
                 val value = intValues[pixel++]
 
-                // EXTRACCIÓN Y NORMALIZACIÓN DE CANALES RGB
-                // Android almacena colores en formato ARGB (32 bits)
-                // Se extraen los 8 bits de cada canal mediante operaciones bit a bit
-
-                // Canal Rojo: bits 16-23
+                // Normalización estándar de Teachable Machine [-1 a 1]
                 byteBuffer.putFloat(((value shr 16 and 0xFF) - 127.5f) / 127.5f)
-
-                // Canal Verde: bits 8-15
                 byteBuffer.putFloat(((value shr 8 and 0xFF) - 127.5f) / 127.5f)
-
-                // Canal Azul: bits 0-7
                 byteBuffer.putFloat(((value and 0xFF) - 127.5f) / 127.5f)
             }
         }
-
         return byteBuffer
     }
 
-    /**
-     * Libera los recursos del intérprete TensorFlow Lite.
-     *
-     * Debe invocarse cuando el clasificador ya no sea necesario
-     * para evitar fugas de memoria nativa (memoria no gestionada por el GC de Java).
-     */
     fun close() {
         interpreter?.close()
     }
