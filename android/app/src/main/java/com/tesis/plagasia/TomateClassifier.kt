@@ -14,17 +14,12 @@ import java.util.Scanner
 
 /**
  * Clasificador inteligente para modelos de Teachable Machine.
- * * Funcionalidad Clave:
- * 1. Carga dinámica de etiquetas desde 'labels.txt'.
- * 2. Limpieza automática de prefijos numéricos (ej: "0 Sano" -> "Sano").
- * 3. Ejecución del modelo 'model_unquant.tflite'.
  */
 class TomateClassifier(private val context: Context) {
 
     private var interpreter: Interpreter? = null
     private var labels: MutableList<String> = mutableListOf()
 
-    // Configuración estándar de Teachable Machine
     private val INPUT_SIZE = 224
     private val MODEL_FILE = "model_unquant.tflite"
     private val LABEL_FILE = "labels.txt"
@@ -34,24 +29,17 @@ class TomateClassifier(private val context: Context) {
             val model = loadModelFile(MODEL_FILE)
             interpreter = Interpreter(model)
             loadLabels(LABEL_FILE)
-            Log.d("PlagaIA", "Modelo cargado correctamente. Etiquetas: $labels")
+            Log.d("PlagaIA", "Modelo cargado. Etiquetas: $labels")
         } catch (e: Exception) {
-            Log.e("PlagaIA", "Error crítico inicializando IA", e)
-            throw RuntimeException("No se pudo cargar el modelo o las etiquetas")
+            Log.e("PlagaIA", "Error inicializando IA", e)
         }
     }
 
-    /**
-     * Carga y limpia las etiquetas del archivo de texto.
-     * Convierte "0 Sano" en "Sano" para que se vea bien en pantalla.
-     */
     private fun loadLabels(filename: String) {
         try {
             val scanner = Scanner(context.assets.open(filename))
             while (scanner.hasNextLine()) {
                 val line = scanner.nextLine()
-                // Usamos Regex para quitar los números del principio si existen
-                // Ej: "0 Sano" se convierte en "Sano"
                 val cleanLabel = line.replace(Regex("^\\d+\\s+"), "").trim()
                 if (cleanLabel.isNotEmpty()) {
                     labels.add(cleanLabel)
@@ -59,8 +47,6 @@ class TomateClassifier(private val context: Context) {
             }
             scanner.close()
         } catch (e: IOException) {
-            Log.e("PlagaIA", "No se encontró labels.txt", e)
-            // Etiquetas de emergencia por si falla la lectura
             labels.addAll(listOf("Clase 1", "Clase 2", "Clase 3", "Clase 4", "Clase 5"))
         }
     }
@@ -74,47 +60,72 @@ class TomateClassifier(private val context: Context) {
         return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
     }
 
-    /**
-     * Clasifica la imagen y devuelve el resultado formateado.
-     * Retorna: "NombrePlaga \n (Porcentaje%)"
-     */
+    // --- NUEVO: FILTRO BOTÁNICO ---
+    // Verifica si la imagen tiene colores de planta antes de molestar a la IA
+    private fun esUnaPlanta(bitmap: Bitmap): Boolean {
+        val intValues = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+
+        var pixelesVerdes = 0
+        val totalPixeles = intValues.size
+
+        for (pixel in intValues) {
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+
+            // Condición: El canal Verde (G) debe ser mayor al Rojo (R) y al Azul (B)
+            // Agregamos un margen (+15) para evitar detectar blancos o grises como verde
+            if (g > r + 15 && g > b + 15) {
+                pixelesVerdes++
+            }
+        }
+
+        // Calculamos qué porcentaje de la foto es verde
+        val porcentajeVerde = pixelesVerdes.toFloat() / totalPixeles
+
+        // Si al menos el 3% de la imagen es verde, asumimos que hay una planta
+        return porcentajeVerde > 0.03f
+    }
+
     fun classify(bitmap: Bitmap): String {
         if (interpreter == null) return "Error: IA no iniciada"
 
-        // 1. Preprocesar imagen
         val scaledBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-        val byteBuffer = convertBitmapToByteBuffer(scaledBitmap)
 
-        // 2. Preparar salida
-        // El tamaño del array de salida debe coincidir con el número de etiquetas
+        // 1. REVISAMOS SI HAY UNA PLANTA
+        if (!esUnaPlanta(scaledBitmap)) {
+            return "Apunte a una planta..."
+        }
+
+        // 2. SI ES PLANTA, CONTINUAMOS CON LA IA
+        val byteBuffer = convertBitmapToByteBuffer(scaledBitmap)
         val output = Array(1) { FloatArray(labels.size) }
 
-        // 3. Ejecutar inferencia
         interpreter?.run(byteBuffer, output)
 
-        // 4. Interpretar resultados
         val probabilities = output[0]
         val maxIndex = probabilities.indices.maxByOrNull { probabilities[it] } ?: -1
 
-        // Umbral de confianza (50%)
-        if (maxIndex != -1 && probabilities[maxIndex] > 0.5f) {
+        if (maxIndex != -1 && probabilities[maxIndex] > 0.85f) {
             val confidence = (probabilities[maxIndex] * 100).toInt()
-            // Obtenemos el nombre limpio de la lista cargada
             val labelName = if (maxIndex < labels.size) labels[maxIndex] else "Desconocido"
-
             return "$labelName\n($confidence%)"
         } else {
             return "Analizando..."
         }
     }
 
-    /**
-     * Método para galería: Muestra todas las probabilidades ordenadas.
-     */
     fun classifyWithAllResults(bitmap: Bitmap): String {
         if (interpreter == null) return "Error: IA no iniciada"
 
         val scaledBitmap = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
+
+        // Filtro botánico también para la galería
+        if (!esUnaPlanta(scaledBitmap)) {
+            return "Imagen no válida\n(0%)"
+        }
+
         val byteBuffer = convertBitmapToByteBuffer(scaledBitmap)
         val output = Array(1) { FloatArray(labels.size) }
 
@@ -122,18 +133,19 @@ class TomateClassifier(private val context: Context) {
 
         val probabilities = output[0]
 
-        // Crear lista de pares (Indice, Probabilidad) y ordenar
         val sortedResults = probabilities.indices
             .map { index -> index to probabilities[index] }
             .sortedByDescending { it.second }
 
-        // Solo retornamos el mejor resultado en formato simple para que MainActivity lo pueda guardar
-        // Si quieres ver todo el detalle, cambia esta lógica, pero para guardar en DB es mejor uno solo.
         val topResult = sortedResults[0]
-        val label = if (topResult.first < labels.size) labels[topResult.first] else "Desconocido"
         val confidence = (topResult.second * 100).toInt()
 
-        return "$label\n($confidence%)"
+        if (topResult.second > 0.85f) {
+            val label = if (topResult.first < labels.size) labels[topResult.first] else "Desconocido"
+            return "$label\n($confidence%)"
+        } else {
+            return "Plaga no reconocida\n($confidence%)"
+        }
     }
 
     private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
@@ -147,8 +159,6 @@ class TomateClassifier(private val context: Context) {
         for (i in 0 until INPUT_SIZE) {
             for (j in 0 until INPUT_SIZE) {
                 val value = intValues[pixel++]
-
-                // Normalización estándar de Teachable Machine [-1 a 1]
                 byteBuffer.putFloat(((value shr 16 and 0xFF) - 127.5f) / 127.5f)
                 byteBuffer.putFloat(((value shr 8 and 0xFF) - 127.5f) / 127.5f)
                 byteBuffer.putFloat(((value and 0xFF) - 127.5f) / 127.5f)
