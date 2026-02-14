@@ -343,15 +343,17 @@ fun PestDetectionScreen() {
                 // Botones de Control
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp) // Espacio un poco más pequeño para que quepan
                 ) {
+                    // Botón 1: Galería
                     Button(
                         onClick = { galleryLauncher.launch("image/*") },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("📁 Abrir Galería")
+                        Text("📁 Galería")
                     }
 
+                    // Botón 2: Cámara (Solo visible en modo galería)
                     if (showGalleryImage) {
                         Button(
                             onClick = {
@@ -361,7 +363,36 @@ fun PestDetectionScreen() {
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("📷 Usar Cámara")
+                            Text("📷 Cámara")
+                        }
+                    }
+
+                    // Botón 3: NUEVO BOTÓN COMPARTIR (Solo visible si hay diagnóstico)
+                    if (sugerenciaTratamiento.isNotEmpty() && !detectionResult.contains("Analizando") && !detectionResult.contains("Apunte")) {
+                        Button(
+                            onClick = {
+                                // Armamos el mensaje para WhatsApp/Correo
+                                val sendIntent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    val textoMensaje = """
+                                        🌱 *Diagnóstico PlagaIA*
+                                        
+                                        🚨 *Detección:* ${detectionResult.replace("\n", " ")}
+                                        
+                                        💡 *Sugerencia:* $sugerenciaTratamiento
+                                    """.trimIndent()
+
+                                    putExtra(Intent.EXTRA_TEXT, textoMensaje)
+                                    type = "text/plain"
+                                }
+                                val shareIntent = Intent.createChooser(sendIntent, "Compartir diagnóstico por...")
+                                context.startActivity(shareIntent)
+                            },
+                            modifier = Modifier.weight(1f),
+                            // Le damos un color verde estilo WhatsApp
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFF128C7E))
+                        ) {
+                            Text("📤 Enviar")
                         }
                     }
                 }
