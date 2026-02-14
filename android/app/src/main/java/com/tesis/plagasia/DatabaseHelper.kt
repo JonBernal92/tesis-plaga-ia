@@ -59,4 +59,11 @@ class DatabaseHelper(context: Context) :
         db.close()
         return lista
     }
+
+    // --- Función para vaciar la base de datos ---
+    fun borrarHistorial() {
+        val db = writableDatabase
+        db.execSQL("DELETE FROM historial")
+        db.close()
+    }
 }

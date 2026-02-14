@@ -1,7 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.recyclerview.widget.RecyclerView
+<LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F5F5">
+
+    <Button
+        android:id="@+id/btnBorrarHistorial"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:text="🗑️ Limpiar Historial"
+        android:textColor="@android:color/white"
+        android:backgroundTint="#D32F2F" /> <androidx.recyclerview.widget.RecyclerView
     android:id="@+id/recyclerHistorial"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="16dp"/>
+    android:paddingHorizontal="16dp"
+    android:clipToPadding="false" />
+
+</LinearLayout>
